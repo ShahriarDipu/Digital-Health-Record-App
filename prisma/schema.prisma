@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+
+  // Email/Password login field. Null for users who only use Google login.
+  password   String?
+
+  // Extra profile fields collected during registration
+  address         String?
+  bloodGroup      String?
+  whatsappNumber  String?
+
+  accounts  Account[]
+  sessions  Session[]
+  visits       Visit[]
+  reminders    Reminder[]
+  blogPosts    BlogPost[]
+  activityLogs ActivityLog[]
+
+  lastLoginAt  DateTime?
+  lastActiveAt DateTime?
+
+  // Why-save intent feedback from lab/prescription upload modal (JSON array)
+  saveIntentFeedback Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model ActivityLog {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action       String
+  source       String?
+  savedToVisit Boolean  @default(false)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@map("activity_logs")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Visit {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  doctorName          String
+  visitDate           String
+  clinicName          String?
+  chiefComplaint      String?
+  prescription        Json?
+  labReports          Json     @default("[]")
+  healthReport        Json?
+  lifestyleDirections Json?
+  visitType           String   @default("initial")
+  parentVisitId       String?
+  progressReport      Json?
+  lastAnalysisFingerprint String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("visits")
+}
+
+model Reminder {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  medicineName String
+  times        Json
+  active       Boolean  @default(true)
+  notifyBeforeMinutes Int @default(0)
+  mutedTimes        Json     @default("[]")
+  doctorName   String?
+  visitId      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("reminders")
+}
+
+model BlogPost {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  titleBn   String
+  titleEn   String?
+  excerptBn String?
+  excerptEn String?
+  contentBn String   @db.Text
+  contentEn String?  @db.Text
+  published Boolean  @default(false)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("blog_posts")
+}
