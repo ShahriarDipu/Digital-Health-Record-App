@@ -1,22 +1,29 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "@/store/useAppStore";
-import type { LabReport, LabBiomarker } from "@/store/useAppStore";
+import type { LabReport } from "@/store/useAppStore";
 import {
   Upload,
   FlaskConical,
   CheckCircle,
-  TrendingUp,
-  TrendingDown,
   AlertTriangle,
   FileX,
 } from "lucide-react";
 import { getT } from "@/lib/translations";
 import { createStepAnimator } from "@/lib/analysisProgress";
-import { getBiomarkerDisplayName, getBiomarkerShortName, getLabReportTypeName } from "@/lib/biomarkerNames";
+import {
+  biomarkerHasReferenceRange,
+  getBiomarkerDisplayName,
+  getBiomarkerShortName,
+  getChartableBiomarkers,
+  getLabReportTypeName,
+  sanitizeLabBiomarker,
+  sanitizeLabReport,
+} from "@/lib/biomarkerNames";
 import AnalysisProcessingProgress from "@/components/AnalysisProcessingProgress";
 import WhySaveUploadModal from "@/components/WhySaveUploadModal";
 import LabReportExplanation from "@/components/LabReportExplanation";
+import BiomarkerResultCard from "@/components/BiomarkerResultCard";
 import {
   patchVisitAfterScan,
   resolveVisitIdFromScanTarget,
@@ -39,88 +46,13 @@ import {
   Cell,
 } from "recharts";
 
-function BiomarkerGauge({ biomarker }: { biomarker: LabBiomarker }) {
-  const { language } = useAppStore();
-  const t = getT(language);
-  const { value, normalMin, normalMax, status, unit } = biomarker;
-  const displayName = getBiomarkerDisplayName(biomarker, language);
-  const maxDisplay = normalMax * 1.8;
-  const percentage = Math.min((value / maxDisplay) * 100, 100);
-  const normalMinPct = (normalMin / maxDisplay) * 100;
-  const normalMaxPct = (normalMax / maxDisplay) * 100;
-
-  const statusConfig = {
-    high: { color: "#ef4444", bg: "bg-red-50", badge: "bg-red-100 text-red-700", label: t.labReports.high, icon: TrendingUp },
-    low: { color: "#f59e0b", bg: "bg-amber-50", badge: "bg-amber-100 text-amber-700", label: t.labReports.low, icon: TrendingDown },
-    normal: { color: "#22c55e", bg: "bg-green-50", badge: "bg-green-100 text-green-700", label: t.labReports.normal, icon: CheckCircle },
-  };
-
-  const config = statusConfig[status];
-  const Icon = config.icon;
-
-  const normalRangeLabel = language === "bn" ? "স্বাভাবিক:" : "Normal:";
-  const highDiffLabel = language === "bn"
-    ? `স্বাভাবিক সীমার চেয়ে ${(value - normalMax).toFixed(1)} ${unit} বেশি`
-    : `${(value - normalMax).toFixed(1)} ${unit} above normal range`;
-  const lowDiffLabel = language === "bn"
-    ? `স্বাভাবিক সীমার চেয়ে ${(normalMin - value).toFixed(1)} ${unit} কম`
-    : `${(normalMin - value).toFixed(1)} ${unit} below normal range`;
-  const normalLabel = language === "bn" ? "স্বাভাবিক পরিসরে আছে" : "Within normal range";
-
-  return (
-    <div className={`${config.bg} rounded-2xl p-4 border border-opacity-30 ${
-      status === "high" ? "border-red-200" : status === "low" ? "border-amber-200" : "border-green-200"
-    }`}>
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <h4 className="font-bold text-gray-800 text-sm">{displayName}</h4>
-          <div className="flex items-baseline gap-1 mt-1">
-            <span className="text-2xl font-black" style={{ color: config.color }}>{value}</span>
-            <span className="text-gray-500 text-xs">{unit}</span>
-          </div>
-        </div>
-        <span className={`text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1 ${config.badge}`}>
-          <Icon className="w-3 h-3" />
-          {config.label}
-        </span>
-      </div>
-
-      {/* Visual Bar Gauge */}
-      <div className="relative">
-        <div className="w-full bg-white rounded-full h-5 overflow-hidden shadow-inner relative">
-          <div
-            className="absolute top-0 h-full bg-green-200 opacity-60"
-            style={{ left: `${normalMinPct}%`, width: `${normalMaxPct - normalMinPct}%` }}
-          />
-          <div
-            className="absolute top-0 left-0 h-full rounded-full transition-all duration-1000"
-            style={{ width: `${percentage}%`, backgroundColor: config.color }}
-          />
-          <div
-            className="absolute top-0 h-full w-0.5 bg-gray-800 opacity-70"
-            style={{ left: `${percentage}%` }}
-          />
-        </div>
-        <div className="flex justify-between text-xs text-gray-500 mt-1 px-0.5">
-          <span>{language === "bn" ? "০" : "0"}</span>
-          <span className="text-green-600 text-xs">{normalRangeLabel} {normalMin}–{normalMax}</span>
-          <span>{maxDisplay.toFixed(0)}</span>
-        </div>
-      </div>
-
-      <p className="text-xs mt-2" style={{ color: config.color }}>
-        {status === "high" ? highDiffLabel : status === "low" ? lowDiffLabel : normalLabel}
-      </p>
-    </div>
-  );
-}
-
 function getReportStats(report: LabReport) {
   if (report.biomarkers.length > 0) {
+    const comparable = getChartableBiomarkers(report);
     return {
-      high: report.biomarkers.filter((b) => b.status === "high").length,
-      low: report.biomarkers.filter((b) => b.status === "low").length,
-      normal: report.biomarkers.filter((b) => b.status === "normal").length,
+      high: comparable.filter((b) => b.status === "high").length,
+      low: comparable.filter((b) => b.status === "low").length,
+      normal: comparable.filter((b) => b.status === "normal").length,
     };
   }
   const findings = report.findings ?? [];
@@ -204,11 +136,11 @@ export default function LabReportVisualizer() {
       setSelectedReport(null);
       return;
     }
-    setSelectedReport((prev) =>
-      prev && labReports.some((r) => r.id === prev.id)
-        ? prev
-        : labReports[labReports.length - 1]
-    );
+    setSelectedReport((prev) => {
+      if (!prev) return sanitizeLabReport(labReports[labReports.length - 1]);
+      const fromStore = labReports.find((r) => r.id === prev.id);
+      return fromStore ? sanitizeLabReport(fromStore) : sanitizeLabReport(labReports[labReports.length - 1]);
+    });
   }, [labReports]);
 
   const analyzeFile = async (
@@ -253,7 +185,7 @@ export default function LabReportVisualizer() {
         throw new Error(data.error || "Analysis failed");
       }
 
-      const report: LabReport = data.report;
+      const report: LabReport = sanitizeLabReport(data.report);
       setProcessingStepIndex(totalSteps - 1);
       setProgress(100);
       await new Promise((r) => setTimeout(r, 400));
@@ -349,8 +281,10 @@ export default function LabReportVisualizer() {
   const highCount = labReports.reduce((sum, r) => sum + getReportStats(r).high, 0);
   const normalCount = labReports.reduce((sum, r) => sum + getReportStats(r).normal, 0);
 
-  const overviewData = selectedReport
-    ? selectedReport.biomarkers.map((b) => ({
+  const displayReport = selectedReport ? sanitizeLabReport(selectedReport) : null;
+
+  const overviewData = displayReport
+    ? getChartableBiomarkers(displayReport).map((b) => ({
         name: getBiomarkerShortName(b, language),
         value: b.value,
         min: b.normalMin,
@@ -358,6 +292,9 @@ export default function LabReportVisualizer() {
         fill: b.status === "high" ? "#ef4444" : b.status === "low" ? "#f59e0b" : "#22c55e",
       }))
     : [];
+
+  const chartableBiomarkers = displayReport ? getChartableBiomarkers(displayReport) : [];
+  const hasAnyBiomarkers = (displayReport?.biomarkers.length ?? 0) > 0;
 
   return (
     <div className="space-y-6 pb-24 lg:pb-8">
@@ -465,25 +402,26 @@ export default function LabReportVisualizer() {
                 key={report.id}
                 report={report}
                 isSelected={selectedReport?.id === report.id}
-                onClick={() => setSelectedReport(report)}
+                onClick={() => setSelectedReport(sanitizeLabReport(report))}
               />
             ))}
           </div>
         )}
       </div>
 
-      {selectedReport && (
+      {displayReport && (
         <>
       {/* Plain-language explanation — shown first */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-        <h3 className="font-bold text-gray-800 mb-1">{getLabReportTypeName(selectedReport, language)}</h3>
-        <p className="text-gray-500 text-xs mb-4">{tl.reportDate} {selectedReport.date}</p>
-        <LabReportExplanation report={selectedReport} language={language} />
+        <h3 className="font-bold text-gray-800 mb-1">{getLabReportTypeName(displayReport, language)}</h3>
+        <p className="text-gray-500 text-xs mb-4">{tl.reportDate} {displayReport.date}</p>
+        <LabReportExplanation report={displayReport} language={language} />
       </div>
 
-      {/* Numeric charts — only for blood tests with biomarkers */}
-      {selectedReport.biomarkers.length > 0 && (
+      {/* Numeric charts — only for biomarkers with a printed reference range */}
+      {hasAnyBiomarkers && (
         <>
+      {chartableBiomarkers.length > 0 && (
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
         <h3 className="font-bold text-gray-800 mb-4">{tl.numericResults}</h3>
 
@@ -513,19 +451,23 @@ export default function LabReportVisualizer() {
           <div className="flex items-center gap-1.5 text-xs text-green-600"><span className="w-3 h-3 bg-green-400 rounded-full" />{tl.normal}</div>
         </div>
       </div>
+      )}
 
-      {/* Individual Biomarker Gauges */}
+      {/* Individual Biomarker cards — gauge only when hasReferenceRange */}
       <div>
         <h3 className="font-bold text-gray-800 mb-3">{tl.biomarkers}</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {selectedReport.biomarkers.map((biomarker, idx) => (
-            <BiomarkerGauge key={idx} biomarker={biomarker} />
+          {displayReport.biomarkers.map((biomarker, idx) => (
+            <BiomarkerResultCard key={idx} biomarker={biomarker} report={displayReport} />
           ))}
         </div>
       </div>
 
-      {/* Alert Banner for High Values */}
-      {selectedReport.biomarkers.some((b) => b.status === "high") && (
+      {/* Alert Banner for High Values — only real reference-range / flagged highs */}
+      {displayReport.biomarkers.some((raw) => {
+        const b = sanitizeLabBiomarker(raw, displayReport);
+        return b.status === "high" && biomarkerHasReferenceRange(b, displayReport);
+      }) && (
         <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex gap-3">
           <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
           <div>
@@ -534,8 +476,9 @@ export default function LabReportVisualizer() {
             </p>
             <p className="text-red-600 text-sm">
               {language === "bn" ? "আপনার " : "Your "}
-              {selectedReport.biomarkers
-                .filter((b) => b.status === "high")
+              {displayReport.biomarkers
+                .map((raw) => sanitizeLabBiomarker(raw, displayReport))
+                .filter((b) => b.status === "high" && biomarkerHasReferenceRange(b, displayReport))
                 .map((b) => getBiomarkerDisplayName(b, language))
                 .join(", ")}{" "}
               {language === "bn"

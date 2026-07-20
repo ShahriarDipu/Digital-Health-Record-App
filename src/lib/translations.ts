@@ -319,6 +319,9 @@ const translations = {
       disclaimer: "এটি শিক্ষামূলক ব্যাখ্যা — চূড়ান্ত চিকিৎসা সিদ্ধান্ত শুধু ডাক্তার দেবেন।",
       numericResults: "সংখ্যাগত চার্ট",
       normalRange: "স্বাভাবিক রেঞ্জ:",
+      measuredValue: "পরিমাপ",
+      noReferenceRangeNote:
+        "এই রিপোর্টে এই মানের স্বাভাবিক সীমা লেখা নেই, তাই তুলনামূলক চার্ট দেখানো হয়নি। মানটি যেমন আছে তেমনই দেখানো হয়েছে।",
       chart: "চার্ট",
       high: "হাই ⬆️",
       low: "লো ⬇️",
@@ -847,6 +850,9 @@ const translations = {
       disclaimer: "This is educational guidance only — final medical decisions must come from your doctor.",
       numericResults: "Numeric Charts",
       normalRange: "Normal Range:",
+      measuredValue: "Measured",
+      noReferenceRangeNote:
+        "No reference range was printed for this value on the report, so a comparison chart is not shown. The value is displayed as measured.",
       chart: "Chart",
       high: "High ⬆️",
       low: "Low ⬇️",

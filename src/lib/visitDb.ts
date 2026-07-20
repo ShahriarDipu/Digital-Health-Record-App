@@ -1,4 +1,5 @@
 import type { Prescription, Visit } from "@/store/useAppStore";
+import { sanitizeLabReport } from "@/lib/biomarkerNames";
 
 function normalizePrescriptions(raw: unknown): Prescription[] {
   if (!raw) return [];
@@ -16,7 +17,11 @@ export function dbToVisit(d: any): Visit {
     clinicName: d.clinicName ?? undefined,
     chiefComplaint: d.chiefComplaint ?? undefined,
     prescriptions: normalizePrescriptions(d.prescription),
-    labReports: Array.isArray(d.labReports) ? d.labReports : [],
+    labReports: Array.isArray(d.labReports)
+      ? d.labReports.map((report: Parameters<typeof sanitizeLabReport>[0]) =>
+          sanitizeLabReport(report)
+        )
+      : [],
     healthReport: d.healthReport ?? undefined,
     lifestyleDirections: d.lifestyleDirections ?? undefined,
     visitType: d.visitType === "followup" ? "followup" : "initial",

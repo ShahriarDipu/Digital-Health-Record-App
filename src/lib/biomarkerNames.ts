@@ -127,6 +127,151 @@ export function getBiomarkerDisplayName(b: LabBiomarker, lang: Language): string
   return b.nameEn || b.name;
 }
 
+function coerceOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "string") {
+    const cleaned = value.trim().replace(/,/g, "");
+    if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return undefined;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+/** Usable printed numeric limits for comparison charts. */
+export function hasValidNumericRange(
+  min?: number,
+  max?: number
+): boolean {
+  const lo = coerceOptionalNumber(min);
+  const hi = coerceOptionalNumber(max);
+  if (lo == null || hi == null) return false;
+  if (lo === 0 && hi === 0) return false;
+  return lo <= hi;
+}
+
+/**
+ * Ultrasound / imaging size measurements — reports rarely print a normal range.
+ * Never show comparison charts for these even if the model invents limits.
+ */
+export function isImagingSizeMeasurement(name: string): boolean {
+  return /fibroid|myoma|gall\s*stone|kidney\s*stone|renal\s*stone|stone\s*size|polyp|ovary|ovarian|uterus|uterine|placenta|cervix|endometri|follicle|nodule|cyst|mass|lesion|fibroi|\bCRL\b|\bBPD\b|\bAFI\b|\bNT\b|uterus\s*length|ovary\s*volume|organ\s*dimension|dimension[s]?\b|\blength\b|\bwidth\b|\bdiameter\b|\bthickness\b|measurement\s*of|size\s*of|ultrasound|sonograph|\busg\b|ফাইব্র|পাথর|জরায়ু|ডিম্ব|ডিম্বাশয়|সিস্ট|এন্ডোমেট্র|প্লাসেন্টা|সার্ভিক্স|গর্ভাশয়|পরিমাপ|দৈর্ঘ্য|প্রস্থ|ব্যাস|পুরুত্ব|আকার/i.test(
+    name
+  );
+}
+
+function biomarkerNameBlob(b: LabBiomarker): string {
+  return `${b.nameEn ?? ""} ${b.nameBn ?? ""} ${b.name}`;
+}
+
+const IMAGING_REPORT_TYPES = new Set([
+  "Pregnancy_USG",
+  "TVS",
+  "Whole_Abdomen",
+  "Pelvic_USG",
+  "Xray",
+  "CT",
+  "MRI",
+  "ultrasound",
+  "xray",
+]);
+
+/** USG / radiology reports — size measurements should not use comparison charts. */
+export function isImagingLabReport(report?: Pick<LabReport, "reportType" | "type" | "typeBn" | "typeEn">): boolean {
+  if (!report) return false;
+  const rt = report.reportType ?? "";
+  if (IMAGING_REPORT_TYPES.has(rt)) return true;
+  const blob = `${report.typeBn ?? ""} ${report.typeEn ?? ""} ${report.type ?? ""}`;
+  return /ultrasound|usg|sonograph|sonography|x-?ray|mri|\bct\b|tvs|pelvic|pregnancy|একো|সনোগ্রাফ|আল্ট্রাসাউন্ড|এক্স-?রে/i.test(
+    blob
+  );
+}
+
+/**
+ * Show comparison chart ONLY when the report printed real numeric limits.
+ * Default is false — never chart on missing/invalid range or imaging values.
+ */
+export function canShowBiomarkerChart(
+  b: LabBiomarker,
+  report?: Pick<LabReport, "reportType" | "type" | "typeBn" | "typeEn">
+): boolean {
+  if (report && isImagingLabReport(report)) return false;
+  if (isImagingSizeMeasurement(biomarkerNameBlob(b))) return false;
+  if (b.hasReferenceRange !== true) return false;
+  const min = coerceOptionalNumber(b.normalMin);
+  const max = coerceOptionalNumber(b.normalMax);
+  return hasValidNumericRange(min, max);
+}
+
+/** @deprecated Use canShowBiomarkerChart */
+export function biomarkerHasReferenceRange(
+  b: LabBiomarker,
+  report?: Pick<LabReport, "reportType" | "type" | "typeBn" | "typeEn">
+): boolean {
+  return canShowBiomarkerChart(b, report);
+}
+
+/** Status badges only when a real comparison range exists. */
+export function biomarkerShowsStatusBadge(b: LabBiomarker): boolean {
+  return biomarkerHasReferenceRange(b);
+}
+
+/**
+ * Strip invented / invalid reference data before display or persistence.
+ * No-range values → name + value + unit only (no chart, no fake normal badge).
+ */
+export function sanitizeLabBiomarker(
+  b: LabBiomarker,
+  report?: Pick<LabReport, "reportType" | "type" | "typeBn" | "typeEn">
+): LabBiomarker {
+  const min = coerceOptionalNumber(b.normalMin);
+  const max = coerceOptionalNumber(b.normalMax);
+  const allowChart = canShowBiomarkerChart(
+    {
+      ...b,
+      normalMin: min,
+      normalMax: max,
+    },
+    report
+  );
+
+  if (!allowChart) {
+    const rest = { ...b };
+    delete rest.normalMin;
+    delete rest.normalMax;
+    const flag = (b.flag ?? "").trim();
+    const hasPrintedFlag = /^(h|l|high|low|n|normal|↑|↓)$/i.test(flag);
+    return {
+      ...rest,
+      hasReferenceRange: false,
+      status: hasPrintedFlag ? b.status : "normal",
+    };
+  }
+
+  return {
+    ...b,
+    hasReferenceRange: true,
+    normalMin: min,
+    normalMax: max,
+  };
+}
+
+export function sanitizeLabReport(report: LabReport): LabReport {
+  return {
+    ...report,
+    biomarkers: report.biomarkers.map((b) => sanitizeLabBiomarker(b, report)),
+  };
+}
+
+/** Biomarkers that may appear in overview bar charts. */
+export function getChartableBiomarkers(report: LabReport): LabBiomarker[] {
+  return report.biomarkers
+    .map((b) => sanitizeLabBiomarker(b, report))
+    .filter((b) => canShowBiomarkerChart(b, report));
+}
+
 /** Short label for charts */
 export function getBiomarkerShortName(b: LabBiomarker, lang: Language): string {
   const full = getBiomarkerDisplayName(b, lang);

@@ -1,105 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
-import type { LabBiomarker, LabReport, LabReportFinding, Prescription, Medicine, HealthReport, LifestyleDirections, ProgressReport, Visit } from "@/store/useAppStore";
+import type { LabReport, Prescription, Medicine, HealthReport, LifestyleDirections, ProgressReport, Visit } from "@/store/useAppStore";
 import type { Language } from "@/lib/translations";
-
-const LAB_BIOMARKER_SCHEMA = {
-  type: "object",
-  properties: {
-    nameBn: {
-      type: "string",
-      description: "Simple Bangla test name patients understand e.g. সাদা রক্ত কোষ, লাল রক্ত কোষ, হিমোগ্লোবিন",
-    },
-    nameEn: {
-      type: "string",
-      description: "English medical name e.g. White Blood Cells, Red Blood Cells, Hemoglobin",
-    },
-    value: { type: "number" },
-    unit: { type: "string" },
-    normalMin: { type: "number" },
-    normalMax: { type: "number" },
-  },
-  required: ["nameBn", "nameEn", "value", "unit", "normalMin", "normalMax"],
-};
-
-const LAB_FINDING_SCHEMA = {
-  type: "object",
-  properties: {
-    titleBn: {
-      type: "string",
-      description: "Organ or test name in simple Bangla e.g. জরায়ু, মূত্রথলি, ডান ডিম্বাশয়",
-    },
-    titleEn: { type: "string", description: "English title e.g. Uterus, Urinary Bladder" },
-    detailBn: {
-      type: "string",
-      description: "2-4 sentences in VERY SIMPLE Bangla explaining what was found and what it means for a non-medical patient",
-    },
-    detailEn: { type: "string", description: "Same explanation in simple English" },
-    status: {
-      type: "string",
-      enum: ["normal", "concern", "info"],
-      description: "normal = OK finding, concern = needs doctor attention, info = neutral/context",
-    },
-  },
-  required: ["titleBn", "titleEn", "detailBn", "detailEn", "status"],
-};
-
-const LAB_REPORT_SCHEMA = {
-  type: "object",
-  properties: {
-    typeBn: {
-      type: "string",
-      description: "Report type in simple Bangla e.g. সম্পূর্ণ রক্ত গণনা, নিম্ন পেটের আল্ট্রাসনোগ্রাম",
-    },
-    typeEn: {
-      type: "string",
-      description: "Report type in English e.g. CBC, Ultrasonogram of Lower Abdomen",
-    },
-    date: { type: "string", description: "Report date in YYYY-MM-DD format" },
-    summaryBn: {
-      type: "string",
-      description: "2-3 sentence overall summary in VERY SIMPLE Bangla for uneducated patients",
-    },
-    summaryEn: { type: "string", description: "Same summary in simple English" },
-    meaningBn: {
-      type: "string",
-      description: "Paragraph in simple Bangla: what this report means overall, limitations (e.g. ultrasound alone does not confirm PCOS), avoid scary language",
-    },
-    meaningEn: { type: "string", description: "Same meaning paragraph in simple English" },
-    nextStepsBn: {
-      type: "array",
-      items: { type: "string" },
-      description: "3-5 actionable next steps in simple Bangla e.g. গাইনি বিশেষজ্ঞের পরামর্শ নিন",
-    },
-    nextStepsEn: {
-      type: "array",
-      items: { type: "string" },
-      description: "3-5 actionable next steps in simple English",
-    },
-    findings: {
-      type: "array",
-      items: LAB_FINDING_SCHEMA,
-      description: "Each organ/test/finding explained separately for the patient",
-    },
-    biomarkers: {
-      type: "array",
-      items: LAB_BIOMARKER_SCHEMA,
-      description: "Numeric test results only — empty array if report has no numbers (e.g. some imaging)",
-    },
-  },
-  required: [
-    "typeBn",
-    "typeEn",
-    "date",
-    "summaryBn",
-    "summaryEn",
-    "meaningBn",
-    "meaningEn",
-    "nextStepsBn",
-    "nextStepsEn",
-    "findings",
-    "biomarkers",
-  ],
-};
+import { LabScanError, runLabScanPipeline } from "@/lib/ai/labScan";
 
 function getClient() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -111,189 +13,23 @@ function getClient() {
 
 // Prescription scanning uses dedicated vision model for accuracy
 const PRESCRIPTION_MODEL = process.env.GEMINI_VISION_MODEL || "gemini-3.1-flash-lite";
-// All other tasks use the standard 
-
-
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 
-function computeStatus(value: number, normalMin: number, normalMax: number): LabBiomarker["status"] {
-  if (value < normalMin) return "low";
-  if (value > normalMax) return "high";
-  return "normal";
-}
-
-function parseGeminiJson(text: string): {
-  typeBn?: string;
-  typeEn?: string;
-  type?: string;
-  date: string;
-  summaryBn?: string;
-  summaryEn?: string;
-  meaningBn?: string;
-  meaningEn?: string;
-  nextStepsBn?: string[];
-  nextStepsEn?: string[];
-  findings?: Record<string, unknown>[];
-  biomarkers: Record<string, unknown>[];
-} {
-  const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  const parsed = JSON.parse(cleaned) as {
-    typeBn?: string;
-    typeEn?: string;
-    type?: string;
-    date: string;
-    summaryBn?: string;
-    summaryEn?: string;
-    meaningBn?: string;
-    meaningEn?: string;
-    nextStepsBn?: string[];
-    nextStepsEn?: string[];
-    findings?: Record<string, unknown>[];
-    biomarkers: Record<string, unknown>[];
-  };
-
-  if ((!parsed.typeBn && !parsed.typeEn && !parsed.type) || !parsed.date) {
-    throw new Error("Invalid response structure from Gemini");
-  }
-
-  if (!Array.isArray(parsed.biomarkers)) parsed.biomarkers = [];
-  if (!Array.isArray(parsed.findings)) parsed.findings = [];
-
-  return parsed;
-}
-
-function parseFindings(raw: Record<string, unknown>[]) {
-  return raw
-    .map((f) => {
-      const status = f.status;
-      const validStatus =
-        status === "normal" || status === "concern" || status === "info"
-          ? status
-          : "info";
-      return {
-        titleBn: String(f.titleBn || f.title || "ফলাফল"),
-        titleEn: String(f.titleEn || f.title || "Finding"),
-        detailBn: String(f.detailBn || f.detail || ""),
-        detailEn: String(f.detailEn || f.detail || ""),
-        status: validStatus as "normal" | "concern" | "info",
-      };
-    })
-    .filter((f) => f.detailBn || f.detailEn);
-}
-
+/**
+ * Lab / imaging report scan — production pipeline.
+ * Successful scans: one Gemini call. Validation failure: at most one retry.
+ * API route contract unchanged.
+ */
 export async function analyzeLabReportImage(
   base64Data: string,
   mimeType: string,
   _language: Language
 ): Promise<LabReport> {
   void _language;
-  const ai = getClient();
-  const model = DEFAULT_MODEL;
-
-  const langInstruction = `BILINGUAL OUTPUT — STRICTLY FOLLOW:
-Return BOTH Bangla and English for all patient-facing text.
-- Use VERY SIMPLE Bangla that an uneducated village patient can understand
-- Put medical terms in parentheses once e.g. "জরায়ু (Uterus)"
-- Never use scary language; be calm and helpful
-- nameBn / typeBn / summaryBn / meaningBn / detailBn / nextStepsBn = simple Bangla
-- nameEn / typeEn / summaryEn / meaningEn / detailEn / nextStepsEn = simple English`;
-
-  const interaction = await ai.interactions.create({
-    model,
-    input: [
-      {
-        type: "text",
-        text: `You are a compassionate health educator for Bangladeshi patients who often cannot read medical English.
-
-Analyze this lab/imaging report image and explain it the way a good doctor would to a worried family member — in PLAIN LANGUAGE.
-
-Report types include: blood tests (CBC, lipid, sugar), ultrasound/sonography, X-ray, urine, thyroid, hormone, pathology, etc.
-
-${langInstruction}
-
-STEP 1 — Extract findings (REQUIRED, at least 3 items):
-For EACH organ, test, or section in the report, add a finding with:
-- titleBn/En: what was examined
-- detailBn/En: what the report says + simple meaning (2-4 sentences)
-- status: "normal" if OK, "concern" if abnormal or needs follow-up, "info" for context
-
-STEP 2 — Numeric biomarkers (when numbers exist):
-For blood tests or measurable values (e.g. hemoglobin, ovary volume 10.2cc, endometrium 6.3mm):
-- nameBn/En, value, unit, normalMin, normalMax
-If no numeric values exist, return biomarkers as empty array [].
-
-STEP 3 — Patient summary (REQUIRED):
-- summaryBn/En: 2-3 sentence overall summary
-- meaningBn/En: what this means for the patient; note if diagnosis cannot be confirmed from report alone
-- nextStepsBn/En: 3-5 practical next steps (see specialist, which tests, lifestyle)
-
-Also extract typeBn/En and date (YYYY-MM-DD).
-
-Return only JSON matching the schema.`,
-      },
-      {
-        type: "image",
-        data: base64Data,
-        mime_type: mimeType,
-      },
-    ],
-    response_format: {
-      type: "text",
-      mime_type: "application/json",
-      schema: LAB_REPORT_SCHEMA,
-    },
-  });
-
-  const outputText = interaction.output_text;
-  if (!outputText) {
-    throw new Error("No response from Gemini");
-  }
-
-  const parsed = parseGeminiJson(outputText);
-
-  const biomarkers: LabBiomarker[] = parsed.biomarkers
-    .filter((b) => typeof b.value === "number" && !Number.isNaN(b.value))
-    .map((b) => {
-      const nameBn = String(b.nameBn || b.name || "অজানা পরীক্ষা");
-      const nameEn = String(b.nameEn || b.name || "Unknown Test");
-      return {
-        name: nameBn,
-        nameBn,
-        nameEn,
-        value: Number(b.value),
-        unit: String(b.unit || ""),
-        normalMin: Number(b.normalMin ?? 0),
-        normalMax: Number(b.normalMax ?? 0),
-        status: computeStatus(Number(b.value), Number(b.normalMin ?? 0), Number(b.normalMax ?? 0)),
-      };
-    });
-
-  const findings: LabReportFinding[] = parseFindings(parsed.findings ?? []);
-
-  if (biomarkers.length === 0 && findings.length === 0) {
-    throw new Error("No biomarkers could be extracted from the report");
-  }
-
-  const typeBn = String(parsed.typeBn || parsed.type || "ল্যাব রিপোর্ট");
-  const typeEn = String(parsed.typeEn || parsed.type || "Lab Report");
-
-  return {
-    id: `lab-${Date.now()}`,
-    type: typeBn,
-    typeBn,
-    typeEn,
-    date: parsed.date,
-    biomarkers,
-    findings,
-    summaryBn: String(parsed.summaryBn || ""),
-    summaryEn: String(parsed.summaryEn || ""),
-    meaningBn: String(parsed.meaningBn || ""),
-    meaningEn: String(parsed.meaningEn || ""),
-    nextStepsBn: Array.isArray(parsed.nextStepsBn) ? parsed.nextStepsBn.map(String) : [],
-    nextStepsEn: Array.isArray(parsed.nextStepsEn) ? parsed.nextStepsEn.map(String) : [],
-    analyzed: true,
-  };
+  return runLabScanPipeline(base64Data, mimeType);
 }
+
+export { LabScanError };
 
 // ─── Prescription Schema ──────────────────────────────────────────────────────
 
@@ -531,7 +267,13 @@ ${prescription.medicines.map(m => `- ${m.name} (${m.dose}, ${m.schedule}): ${m.p
 
   const labText = labReports.map(report => `
 Lab Report: ${report.type} (${report.date})
-${report.biomarkers.map(b => `- ${b.name}: ${b.value} ${b.unit} [Normal: ${b.normalMin}-${b.normalMax}] STATUS: ${b.status.toUpperCase()}`).join("\n")}
+${report.biomarkers.map(b => {
+  const range =
+    b.hasReferenceRange && b.normalMin != null && b.normalMax != null
+      ? `[Normal: ${b.normalMin}-${b.normalMax}]`
+      : "[No printed reference range]";
+  return `- ${b.name}: ${b.value} ${b.unit} ${range} STATUS: ${b.status.toUpperCase()}`;
+}).join("\n")}
 `).join("\n---\n");
 
   const interaction = await ai.interactions.create({
@@ -689,7 +431,13 @@ export async function generateProgressReport(
     if (v.labReports.length > 0) {
       v.labReports.forEach(r => {
         lines.push(`Lab: ${r.type} (${r.date})`);
-        r.biomarkers.forEach(b => lines.push(`  - ${b.name}: ${b.value} ${b.unit} [${b.normalMin}-${b.normalMax}] ${b.status.toUpperCase()}`));
+        r.biomarkers.forEach(b => {
+          const range =
+            b.hasReferenceRange && b.normalMin != null && b.normalMax != null
+              ? `[${b.normalMin}-${b.normalMax}]`
+              : "[no printed range]";
+          lines.push(`  - ${b.name}: ${b.value} ${b.unit} ${range} ${b.status.toUpperCase()}`);
+        });
       });
     }
     if (v.healthReport) {

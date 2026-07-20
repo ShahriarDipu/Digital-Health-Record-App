@@ -7,7 +7,12 @@ import { getT } from "@/lib/translations";
 import DeleteConfirmModal from "@/components/DeleteConfirmModal";
 import AnalysisProcessingProgress from "@/components/AnalysisProcessingProgress";
 import LabReportExplanation from "@/components/LabReportExplanation";
-import { getBiomarkerDisplayName, getBiomarkerShortName, getLabReportTypeName } from "@/lib/biomarkerNames";
+import BiomarkerResultCard from "@/components/BiomarkerResultCard";
+import {
+  getBiomarkerShortName,
+  getChartableBiomarkers,
+  getLabReportTypeName,
+} from "@/lib/biomarkerNames";
 import { createStepAnimator } from "@/lib/analysisProgress";
 import {
   computeVisitSourceFingerprint,
@@ -904,10 +909,11 @@ function PrescriptionTab({ visit }: { visit: Visit }) {
 
 function getLabReportStats(report: LabReport) {
   if (report.biomarkers.length > 0) {
+    const comparable = getChartableBiomarkers(report);
     return {
-      high: report.biomarkers.filter((b) => b.status === "high").length,
-      low: report.biomarkers.filter((b) => b.status === "low").length,
-      normal: report.biomarkers.filter((b) => b.status === "normal").length,
+      high: comparable.filter((b) => b.status === "high").length,
+      low: comparable.filter((b) => b.status === "low").length,
+      normal: comparable.filter((b) => b.status === "normal").length,
     };
   }
   const findings = report.findings ?? [];
@@ -993,7 +999,7 @@ function LabReportsTab({ visit }: { visit: Visit }) {
   };
 
   const overviewData = selectedReport
-    ? selectedReport.biomarkers.map((b) => ({
+    ? getChartableBiomarkers(selectedReport).map((b) => ({
         name: getBiomarkerShortName(b, language),
         value: b.value,
         fill:
@@ -1145,6 +1151,7 @@ function LabReportsTab({ visit }: { visit: Visit }) {
 
           {selectedReport.biomarkers.length > 0 && (
             <>
+          {overviewData.length > 0 && (
           <div className="bg-white rounded-2xl p-4 border border-gray-100">
             <p className="font-bold text-gray-800 mb-3">{tl.numericResults}</p>
             <div className="h-44 w-full">
@@ -1172,92 +1179,12 @@ function LabReportsTab({ visit }: { visit: Visit }) {
               </ResponsiveContainer>
             </div>
           </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {selectedReport.biomarkers.map((b, idx) => {
-              const maxDisplay = b.normalMax * 1.8;
-              const pct = Math.min((b.value / maxDisplay) * 100, 100);
-              const normMinPct = (b.normalMin / maxDisplay) * 100;
-              const normMaxPct = (b.normalMax / maxDisplay) * 100;
-              const cfg =
-                b.status === "high"
-                  ? {
-                      color: "#ef4444",
-                      bg: "bg-red-50",
-                      badge: "bg-red-100 text-red-700",
-                      label: tl.high,
-                      Icon: TrendingUp,
-                    }
-                  : b.status === "low"
-                  ? {
-                      color: "#f59e0b",
-                      bg: "bg-amber-50",
-                      badge: "bg-amber-100 text-amber-700",
-                      label: tl.low,
-                      Icon: TrendingDown,
-                    }
-                  : {
-                      color: "#22c55e",
-                      bg: "bg-green-50",
-                      badge: "bg-green-100 text-green-700",
-                      label: tl.normal,
-                      Icon: CheckCircle,
-                    };
-              return (
-                <div
-                  key={idx}
-                  className={`${cfg.bg} rounded-2xl p-4 border border-opacity-20 ${
-                    b.status === "high"
-                      ? "border-red-200"
-                      : b.status === "low"
-                      ? "border-amber-200"
-                      : "border-green-200"
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <p className="font-bold text-gray-800 text-sm">
-                        {getBiomarkerDisplayName(b, language)}
-                      </p>
-                      <div className="flex items-baseline gap-1">
-                        <span
-                          className="text-xl font-black"
-                          style={{ color: cfg.color }}
-                        >
-                          {b.value}
-                        </span>
-                        <span className="text-gray-400 text-xs">{b.unit}</span>
-                      </div>
-                    </div>
-                    <span
-                      className={`text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 ${cfg.badge}`}
-                    >
-                      <cfg.Icon className="w-3 h-3" />
-                      {cfg.label}
-                    </span>
-                  </div>
-                  <div className="w-full bg-white rounded-full h-4 overflow-hidden relative">
-                    <div
-                      className="absolute top-0 h-full bg-green-200 opacity-50"
-                      style={{
-                        left: `${normMinPct}%`,
-                        width: `${normMaxPct - normMinPct}%`,
-                      }}
-                    />
-                    <div
-                      className="absolute top-0 left-0 h-full rounded-full transition-all"
-                      style={{
-                        width: `${pct}%`,
-                        backgroundColor: cfg.color,
-                      }}
-                    />
-                  </div>
-                  <p className="text-xs mt-1.5 text-gray-500">
-                    {tl.normalRange} {b.normalMin}–{b.normalMax} {b.unit}
-                  </p>
-                </div>
-              );
-            })}
+            {selectedReport.biomarkers.map((b, idx) => (
+              <BiomarkerResultCard key={idx} biomarker={b} report={selectedReport} />
+            ))}
           </div>
             </>
           )}

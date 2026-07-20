@@ -11,6 +11,9 @@ const withPWA = require("next-pwa")({
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  compiler: {
+    removeConsole: process.env.NODE_ENV === "production" ? { exclude: ["error", "warn"] } : false,
+  },
   async redirects() {
     return [
       { source: "/visits", destination: "/dashboard/visits", permanent: true },

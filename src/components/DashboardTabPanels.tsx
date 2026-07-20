@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import type { DashboardTabId } from "@/lib/dashboardRoutes";
 
+/** Lazy-load heavy tabs so first dashboard paint stays fast in production. */
 const Dashboard = dynamic(() => import("@/components/Dashboard"), { loading: () => null });
 const VisitManager = dynamic(() => import("@/components/VisitManager"), { loading: () => null });
 const PrescriptionDecoder = dynamic(() => import("@/components/PrescriptionDecoder"), {

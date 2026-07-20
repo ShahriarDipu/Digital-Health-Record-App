@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { analyzeLabReportImage } from "@/lib/gemini";
+import { analyzeLabReportImage, LabScanError } from "@/lib/gemini";
 import { publicApiError } from "@/lib/apiError";
 import { labScanMetadata, logActivity, touchUserActive } from "@/lib/activityLog";
 import type { Language } from "@/lib/translations";
@@ -59,8 +59,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ report }, { status: 200 });
   } catch (error) {
     console.error("Lab report analysis error:", error);
+
+    if (error instanceof LabScanError) {
+      const message = error.suggestion
+        ? `${error.message} ${error.suggestion}`
+        : error.message;
+      const status =
+        error.code === "unreadable_image" || error.code === "validation_failed"
+          ? 422
+          : 500;
+      return NextResponse.json({ error: message }, { status });
+    }
+
     const message = publicApiError(error, "Failed to analyze lab report");
-    const status = message.includes("Gemini API key") || message.includes("Service temporarily") ? 503 : 500;
+    const status =
+      message.includes("Gemini API key") || message.includes("Service temporarily")
+        ? 503
+        : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }

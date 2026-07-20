@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Language } from "@/lib/translations";
+import type { DetectedReportType } from "@/lib/reportTypeDetector";
+import { sanitizeLabReport } from "@/lib/biomarkerNames";
 
 export interface Medicine {
   name: string;
@@ -32,11 +34,20 @@ export interface LabBiomarker {
   name: string;
   value: number;
   unit: string;
-  normalMin: number;
-  normalMax: number;
+  /**
+   * True only when the original report printed a usable reference range.
+   * UI may show comparison charts only when this is true.
+   */
+  hasReferenceRange: boolean;
+  /** Present only when hasReferenceRange is true — never invent */
+  normalMin?: number;
+  /** Present only when hasReferenceRange is true — never invent */
+  normalMax?: number;
   status: "low" | "normal" | "high";
   nameBn?: string;
   nameEn?: string;
+  /** Explicit H/L/↑/↓ from the report when present */
+  flag?: string;
 }
 
 export interface LabReportFinding {
@@ -63,6 +74,32 @@ export interface LabReport {
   nextStepsBn?: string[];
   nextStepsEn?: string[];
   findings?: LabReportFinding[];
+  /** OCR/extraction confidence 0–100 */
+  confidence?: number;
+  /** Visual quality of the uploaded image */
+  imageQuality?: "excellent" | "good" | "fair" | "poor" | "unreadable";
+  /** Machine category from TypeScript report-type detector (text-based, not AI guess) */
+  reportType?:
+    | DetectedReportType
+    // Legacy values kept for backward compatibility with older saved reports
+    | "blood_test"
+    | "ultrasound"
+    | "xray"
+    | "urine"
+    | "hormone"
+    | "thyroid"
+    | "pathology"
+    | "other";
+  /** Dedicated Impression extract (empty if absent) */
+  impression?: { bn: string; en: string };
+  /** Dedicated Conclusion extract (empty if absent) */
+  conclusion?: { bn: string; en: string };
+  /** Advice printed on the report only (never invented) */
+  recommendation?: { bn: string; en: string };
+  /** OCR/readability issues */
+  ocrWarnings?: string[];
+  /** Partially visible or ambiguous findings */
+  uncertainFindings?: string[];
 }
 
 export interface Reminder {
@@ -163,13 +200,16 @@ export interface Visit {
 function normalizeVisitPrescriptions(
   visit: Visit & { prescription?: Prescription }
 ): Visit {
-  if (Array.isArray(visit.prescriptions)) {
-    return visit;
-  }
-  const legacy = visit.prescription;
+  const base =
+    Array.isArray(visit.prescriptions)
+      ? visit
+      : {
+          ...visit,
+          prescriptions: visit.prescription ? [visit.prescription] : [],
+        };
   return {
-    ...visit,
-    prescriptions: legacy ? [legacy] : [],
+    ...base,
+    labReports: (base.labReports ?? []).map(sanitizeLabReport),
   };
 }
 
@@ -236,10 +276,13 @@ export const useAppStore = create<AppState>()(
 
   labReports: [],
   currentLabReport: null,
-  setLabReports: (reports) => set({ labReports: reports }),
-  setCurrentLabReport: (report) => set({ currentLabReport: report }),
+  setLabReports: (reports) => set({ labReports: reports.map(sanitizeLabReport) }),
+  setCurrentLabReport: (report) =>
+    set({ currentLabReport: report ? sanitizeLabReport(report) : null }),
   addLabReport: (report) =>
-    set((state) => ({ labReports: [...state.labReports, report] })),
+    set((state) => ({
+      labReports: [...state.labReports, sanitizeLabReport(report)],
+    })),
 
   reminders: [],
   setReminders: (reminders) => set({ reminders }),
@@ -308,7 +351,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "shastha-sathi-store",
-      version: 2,
+      version: 6,
       migrate: (persisted) => {
         const state = persisted as {
           language?: Language;
